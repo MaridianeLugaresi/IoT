@@ -2,7 +2,8 @@ import paho.mqtt.client as mqtt
 import time
 import json
 import random
-import threading # Módulo para rodar as 4 conexões em paralelo
+import threading
+import sys
 
 # ====================
 # CONFIGURAÇÕES GLOBAIS
@@ -11,36 +12,39 @@ THINGSBOARD_HOST = 'mqtt.thingsboard.cloud'
 THINGSBOARD_PORT = 1883
 TELEMETRY_TOPIC = 'v1/devices/me/telemetry'
 
+# Flag de evento para sinalizar a todas as threads para parar
+stop_event = threading.Event() 
+
 # ====================
 # CLASSE PARA CADA DISPOSITIVO (SENSOR)
 # ====================
 
 class SensorDevice(threading.Thread):
     def __init__(self, name, access_token, data_key, min_limit, max_limit, initial_value):
-        # Inicializa a Thread e os atributos do dispositivo
+        
         super().__init__()
         self.name = name
         self.access_token = access_token
-        self.data_key = data_key  # Ex: "temperatura", "umidade", etc.
+        self.data_key = data_key  
         self.min_limit = min_limit
         self.max_limit = max_limit
         self.ultima_leitura_valida = initial_value
         
-        # Cria um cliente MQTT ÚNICO para esta thread/dispositivo
         self.client = mqtt.Client(client_id=f"Client-{name}")
         self.client.on_connect = self.on_connect
+
         self.client.username_pw_set(self.access_token)
 
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             print(f"[{self.name}] CONECTADO ao ThingsBoard.")
         else:
-            print(f"[{self.name}] FALHA NA CONEXÃO, código {rc}")
+            print(f"[{self.name}] FALHA NA CONEXÃO, código {rc}. Tentando reconexão...")
+            stop_event.set()
 
     def generate_data(self):
-        """Gera um valor com variação e chance de outlier."""
+        """Gera um valor com variação e chance de dar outlier."""
         
-        # Gera valor baseado na última leitura válida
         raw_value = self.ultima_leitura_valida + random.uniform(-1.0, 1.0)
         
         # 5% de chance de Outlier
@@ -53,7 +57,7 @@ class SensorDevice(threading.Thread):
         return raw_value
 
     def filter_outlier(self, raw_value):
-        """REQUISITO B: Aplica o filtro de outlier."""
+        """REQUISITO B: Aplica o filtro de outlier (processamento local)."""
         
         if raw_value > self.max_limit or raw_value < self.min_limit:
             # Se for outlier, usa a última leitura válida
@@ -63,88 +67,70 @@ class SensorDevice(threading.Thread):
             # Se for válido, atualiza e usa o valor original
             self.ultima_leitura_valida = raw_value
             processed_value = raw_value
-            # print(f"[{self.name}] [VÁLIDO] Valor: {processed_value:.2f}") # Remova o comentário para ver todos os envios
             
         return round(processed_value, 2)
     
     def run(self):
-        """O Loop principal da Thread para este dispositivo."""
         
         try:
-            # Conecta o cliente MQTT específico desta thread
             self.client.connect(THINGSBOARD_HOST, THINGSBOARD_PORT, 60)
-            self.client.loop_start() # Inicia o loop em segundo plano para esta conexão
+            self.client.loop_start() 
             
-            while True:
+            while not stop_event.is_set():
+                
                 # 1. Geração e Processamento de Dados
                 raw_data = self.generate_data()
                 processed_data = self.filter_outlier(raw_data)
                 
-                # 2. Criação do Payload
-                telemetry_data = {
-                    self.data_key: processed_data # A chave é dinâmica: "temp_rack", "umidade_ar", etc.
-                }
+                # 2. Criação e Envio do Payload
+                telemetry_data = { self.data_key: processed_data }
                 payload = json.dumps(telemetry_data)
                 
-                # 3. Envio
                 self.client.publish(TELEMETRY_TOPIC, payload, qos=1)
                 
-                time.sleep(random.randint(4, 7)) # Intervalo aleatório entre 4 e 7 segundos
-                
-        except KeyboardInterrupt:
+                stop_event.wait(timeout=random.randint(4, 7))
+
+        except Exception as e:
+            print(f"[{self.name}] Erro inesperado: {e}")
+            
+        finally:
             self.client.loop_stop()
             self.client.disconnect()
-            print(f"\n[{self.name}] Simulação encerrada.")
+            print(f"[{self.name}] Encerrado e desconectado.")
 
 
 # ====================
-# INICIALIZAÇÃO DOS 4 DISPOSITIVOS (REQUISITO A)
+# INICIALIZAÇÃO E CONTROLE CENTRAL (REQUISITO A)
 # ====================
 
 if __name__ == '__main__':
     
     print("Iniciando Simulação Distribuída de 4 Dispositivos IoT...")
 
-    # ATENÇÃO: SUBSTITUA 'TOKEN_X' PELOS 4 TOKENS REAIS DO THINGSBOARD
     devices = [
-        # D1: Servidor Principal - Temperatura
         SensorDevice(
             name="ServidorPrincipal", 
             access_token="q35VjYD6kkq7wBoF2taa", 
             data_key="temp_rack",
-            min_limit=15.0, 
-            max_limit=40.0, 
-            initial_value=25.0
+            min_limit=15.0, max_limit=40.0, initial_value=25.0
         ),
-        
-        # D2: Entrada de Ar - Umidade
         SensorDevice(
             name="EntradaAr", 
             access_token="uekn6jmw6cwtm4xtdq5m", 
             data_key="umidade_ar",
-            min_limit=40.0, 
-            max_limit=80.0, 
-            initial_value=60.0
+            min_limit=40.0, max_limit=80.0, initial_value=60.0
         ),
-        
-        # D3: Estabilizador - Vibração
         SensorDevice(
             name="Estabilizador", 
             access_token="Z5JbjXLkzMmy8ekI3yzI", 
             data_key="vibracao_fan",
-            min_limit=10.0, 
-            max_limit=800.0, 
-            initial_value=300.0
+            min_limit=10.0, max_limit=800.0, initial_value=300.0
         ),
-        
-        # D4: Iluminação - Luminosidade
         SensorDevice(
             name="Iluminacao", 
             access_token="80Cci9DgxUvLzYYFStps", 
             data_key="lux",
-            min_limit=50.0, 
-            max_limit=900.0, 
-            initial_value=500.0
+            min_limit=50.0, max_limit=900.0, initial_value=500.0
         )
     ]
 
@@ -153,11 +139,17 @@ if __name__ == '__main__':
         device.start()
         
     try:
-        # Mantém o script principal rodando até que todas as threads terminem (ou Ctrl+C)
+        # Loop para manter a thread principal viva e monitorar o Ctrl+C
+        while not stop_event.is_set():
+            time.sleep(1) 
+            
+    except KeyboardInterrupt:
+        print("\n\n[MAIN] Ctrl+C detectado. Sinalizando threads para parar...")
+        stop_event.set()
+        
+    finally:
         for device in devices:
             device.join() 
             
-    except KeyboardInterrupt:
-        print("\n\nEncerrando todas as threads (dispositivos)...")
-        # As threads serão encerradas dentro do loop 'run'
-        pass
+        print("[MAIN] Todas as simulações encerradas. Script finalizado com sucesso.")
+        sys.exit(0)

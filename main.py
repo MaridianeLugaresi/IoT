@@ -20,7 +20,7 @@ stop_event = threading.Event()
 # ====================
 
 class SensorDevice(threading.Thread):
-    def __init__(self, name, access_token, data_key, min_limit, max_limit, initial_value):
+    def __init__(self, name, access_token, data_key, min_limit, max_limit, initial_value, is_binary=False):
         
         super().__init__()
         self.name = name
@@ -29,6 +29,7 @@ class SensorDevice(threading.Thread):
         self.min_limit = min_limit
         self.max_limit = max_limit
         self.ultima_leitura_valida = initial_value
+        self.is_binary = is_binary
         
         self.client = mqtt.Client(client_id=f"Client-{name}")
         self.client.on_connect = self.on_connect
@@ -45,6 +46,20 @@ class SensorDevice(threading.Thread):
     def generate_data(self):
         """Gera um valor com variação e chance de dar outlier."""
         
+        if self.is_binary:
+            # Para sensores binários (como vazamento): 98% de chance de 0, 2% de chance de 1
+            if random.random() < 0.02:
+                raw_value = 1 # Vazamento detectado
+            else:
+                raw_value = 0 # Normal
+            
+            # 1% de chance de outlier (valor diferente de 0 ou 1)
+            if random.random() < 0.01:
+                 raw_value = random.choice([2, -1, 99]) # Outlier
+            
+            return raw_value
+        
+        # Para sensores contínuos
         raw_value = self.ultima_leitura_valida + random.uniform(-1.0, 1.0)
         
         # 5% de chance de Outlier
@@ -59,6 +74,20 @@ class SensorDevice(threading.Thread):
     def filter_outlier(self, raw_value):
         """REQUISITO B: Aplica o filtro de outlier (processamento local)."""
         
+        # Lógica especial para sensor Binário (Vazamento)
+        if self.is_binary:
+            if raw_value not in [0, 1]:
+                # Outlier: Deve ser 0 ou 1. Assume-se que a última leitura válida é 0 (Sem vazamento)
+                processed_value = 0 
+                print(f"[{self.name}] [OUTLIER BINÁRIO] Original: {raw_value}. Enviando: {processed_value}")
+                return processed_value
+            
+            # Atualiza a última leitura válida, se necessário
+            self.ultima_leitura_valida = raw_value
+            return raw_value
+            
+        
+        # Lógica para sensores Contínuos (Temperatura, Umidade, Vibração)
         if raw_value > self.max_limit or raw_value < self.min_limit:
             # Se for outlier, usa a última leitura válida
             processed_value = self.ultima_leitura_valida
@@ -88,7 +117,11 @@ class SensorDevice(threading.Thread):
                 
                 self.client.publish(TELEMETRY_TOPIC, payload, qos=1)
                 
-                stop_event.wait(timeout=random.randint(4, 7))
+                # Vazamento é muito crítico, envie um pouco mais rápido
+                if self.is_binary:
+                    stop_event.wait(timeout=random.randint(1, 3)) 
+                else:
+                    stop_event.wait(timeout=random.randint(4, 7))
 
         except Exception as e:
             print(f"[{self.name}] Erro inesperado: {e}")
@@ -108,29 +141,37 @@ if __name__ == '__main__':
     print("Iniciando Simulação Distribuída de 4 Dispositivos IoT...")
 
     devices = [
+        # D1: Servidor Principal - Temperatura (Limites refinados: 10C a 50C)
         SensorDevice(
             name="ServidorPrincipal", 
             access_token="q35VjYD6kkq7wBoF2taa", 
             data_key="temp_rack",
-            min_limit=15.0, max_limit=40.0, initial_value=25.0
+            min_limit=10.0, max_limit=50.0, initial_value=25.0
         ),
+        
+        # D2: Entrada de Ar - Umidade (Limites refinados: 20% a 90%)
         SensorDevice(
             name="EntradaAr", 
             access_token="uekn6jmw6cwtm4xtdq5m", 
             data_key="umidade_ar",
-            min_limit=40.0, max_limit=80.0, initial_value=60.0
+            min_limit=20.0, max_limit=90.0, initial_value=60.0
         ),
+        
+        # D3: Estabilizador - Vibração (Limites refinados: 5 a 1500)
         SensorDevice(
             name="Estabilizador", 
             access_token="Z5JbjXLkzMmy8ekI3yzI", 
             data_key="vibracao_fan",
-            min_limit=10.0, max_limit=800.0, initial_value=300.0
+            min_limit=5.0, max_limit=1500.0, initial_value=300.0
         ),
+        
+        # D4: DETECTOR DE VAZAMENTO DE ÁGUA (Novo Dispositivo Crítico)
         SensorDevice(
-            name="Iluminacao", 
-            access_token="80Cci9DgxUvLzYYFStps", 
-            data_key="lux",
-            min_limit=50.0, max_limit=900.0, initial_value=500.0
+            name="DetectorAgua", 
+            access_token="23bfivmrl0lc9rym66rg", 
+            data_key="vazamento_agua", # 0: Normal, 1: Vazamento
+            min_limit=0, max_limit=1, initial_value=0, 
+            is_binary=True # Indica que é um sensor binário
         )
     ]
 

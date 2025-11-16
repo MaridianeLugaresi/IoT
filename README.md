@@ -66,6 +66,9 @@ O monitoramento se concentra em vetores de risco críticos para um Data Center.
 1.  Substitua os tokens no bloco `devices` do `main.py` pelos seus tokens.
 2.  Execute o script:
     ```bash
-    python main.py
+    python3 main.py
     ```
 3.  Para parar de forma segura, pressione **Ctrl+C**.
+
+## Vídeo de apresentação
+https://www.youtube.com/watch?v=nuEeBPj3y-c

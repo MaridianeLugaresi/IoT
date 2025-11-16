@@ -1,4 +1,4 @@
-# 💻 README: Monitoramento de Sala de Servidores com IoT Distribuída (ThingsBoard)
+# Monitoramento de Sala de Servidores com IoT Distribuída (ThingsBoard)
 
 Este projeto implementa um ambiente de **Internet das Coisas (IoT) distribuída** simulando o monitoramento crítico de uma Sala de Servidores (Data Center). O sistema envia dados de sensoriamento, aplica processamento local de *outliers* e gera **Alarmes Críticos** na plataforma em nuvem **ThingsBoard**.
 
